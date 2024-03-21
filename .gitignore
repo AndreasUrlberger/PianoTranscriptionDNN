@@ -1,0 +1,9 @@
+/__pycache__
+*.wav
+*.mid
+*.midi
+*.mp3
+*.flac
+*.png
+*.jpg
+.DS_Store

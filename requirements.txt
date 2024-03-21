@@ -1,0 +1,30 @@
+# Deep learning
+torch
+torchaudio
+numpy
+
+# Midi editing
+mido
+
+# Audio processing
+librosa
+
+# Visualization
+matplotlib
+IPython
+midi2audio
+
+# Other
+# Strip away output of jupyter notebooks (used before commit to git) (https://stackoverflow.com/questions/57100070/sanitizing-output-and-formatting-jupyter-notebooks-files-during-git-commits?rq=3)
+# Requires the following configuration of git:
+# git config filter.jupyter.clean nbstripout
+# git config filter.jupyter.smudge cat
+# git add --renormalize .
+nbstripout
+
+
+# Install required packages (system)
+# Linux
+# !sudo apt install -y fluidsynth
+# Mac
+# !brew install fluidsynth
