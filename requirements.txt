@@ -13,14 +13,13 @@ librosa
 matplotlib
 IPython
 midi2audio
+tqdm
+tensorboard
 
 # Other
-# Strip away output of jupyter notebooks (used before commit to git) (https://stackoverflow.com/questions/57100070/sanitizing-output-and-formatting-jupyter-notebooks-files-during-git-commits?rq=3)
+# Strip away output of jupyter notebooks (used before commit to git) (I don't think this actually works)
 # Requires the following configuration of git:
-# git config filter.jupyter.clean nbstripout
-# git config filter.jupyter.smudge cat
-# git add --renormalize .
-nbstripout
+# git config filter.strip-notebook-output.clean 'jupyter nbconvert --ClearOutputPreprocessor.enabled=True --to=notebook --stdin --stdout --log-level=ERROR'
 
 
 # Install required packages (system)
