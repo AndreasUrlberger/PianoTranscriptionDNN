@@ -16,6 +16,13 @@ class MidiTranscriptionModel(torch.nn.Module):
     def forward(self, x):
         x = self.FC(x)
         return x
+    
+    def predict(self, x):
+        self.eval()
+        with torch.no_grad():
+            x = self.forward(x)
+            x = torch.sigmoid(x)
+        return x
 
     def training_step(self, batch):
         # switch to train mode

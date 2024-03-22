@@ -17,12 +17,9 @@ def write_test_file():
     # Save the MIDI file
     mid.save('output2.mid')
 
-
 def read_midi_file(file_path):
     # Open the MIDI file (clip=True handles notes over 127 velocity)
     mid = MidiFile('./output.mid', clip=True)
-    
-
 
 def play_midi(midi_file_path):
     fs = FluidSynth(sound_font='Yamaha_C3_Grand_Piano.sf2')
