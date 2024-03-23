@@ -7,3 +7,4 @@
 *.png
 *.jpg
 .DS_Store
+/models

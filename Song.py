@@ -67,8 +67,8 @@ class Song:
                     
         return discrete_frames
     
-    def start_time_tensor_to_midi(tensor: torch.Tensor, out_path, discretization_step: int, bpm = 120, tempo = 500000):
-        default_velocity = 64
+    def start_time_tensor_to_midi(tensor: torch.Tensor, out_path, discretization_step: int, bpm = 120, tempo = 500000, note_threshold = 0.5):
+        default_velocity = 100
 
         # Add one zero tensor to the end of the given tensor to make sure all notes are lifted at the end.
         tensor = torch.cat((tensor, torch.zeros(1, tensor.shape[1])), 0)
@@ -93,7 +93,7 @@ class Song:
         last_tick = 0
 
         for step in range(tensor.shape[0]):
-            if step % 1000 == 0:
+            if step % 10000 == 0:
                 print(f"Processing step {step} of {tensor.shape[0]}")
 
             # current_second = step / discretization_step
@@ -106,7 +106,7 @@ class Song:
             frame = tensor[step]
             # Assume any note value above 0.5 is a note
             # pressed_notes = set((frame > 0.5).nonzero().flatten())
-            pressed_notes = frame > 0.5
+            pressed_notes = frame > note_threshold
 
             # Newly pressed notes.
             new_notes = (pressed_notes & ~last_notes).nonzero().flatten()

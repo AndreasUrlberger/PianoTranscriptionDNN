@@ -23,7 +23,7 @@ def read_midi_file(file_path):
 
 def play_midi(midi_file_path):
     fs = FluidSynth(sound_font='Yamaha_C3_Grand_Piano.sf2')
-    fs.midi_to_audio('/Users/andreas/Development/Midi-Conversion/maestro-v3.0.0/2018/MIDI-Unprocessed_Chamber2_MID--AUDIO_09_R3_2018_wav--1.midi', 'output.wav')
+    fs.midi_to_audio(midi_file=midi_file_path, audio_file='output.wav')
     display(Audio('output.wav'))
 
 def print_midi_info(midi_file_path):
