@@ -39,9 +39,7 @@ class MidiTranscriptionModel(torch.nn.Module):
         self.train()
         # Reset gradients
         self.optimizer.zero_grad()
-        audio, midi = batch[0], batch[1]
-        audio.to(self.device)
-        midi.to(self.device)
+        audio, midi = batch[0].to(self.device), batch[1].to(self.device)
 
         # Prediction
         pred_midi = self.forward(audio)
@@ -57,9 +55,7 @@ class MidiTranscriptionModel(torch.nn.Module):
         # Set model to evaluation mode
         self.eval()
         with torch.no_grad():
-            audio, midi = batch[0], batch[1]
-            audio.to(self.device)
-            midi.to(self.device)
+            audio, midi = batch[0].to(self.device), batch[1].to(self.device)
             # Prediction
             pred_midi = self.forward(audio)
             loss = self.loss_fn(pred_midi, midi)

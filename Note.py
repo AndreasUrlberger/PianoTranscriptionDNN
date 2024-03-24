@@ -27,10 +27,10 @@ class Note:
                     notes.append(Note(msg.note, start_time, current_time))
                     del open_notes[msg.note]
                 else:
-                    print("Note off without note on.")
+                    print(f"Note off without note on. File: {midi.filename}")
             elif msg.type == 'note_on':
                 if msg.note in open_notes:
-                    print("Open note already contained, something must be wrong.")
+                    print(f"Open note already contained, something must be wrong. File: {midi.filename}")
                 open_notes[msg.note] = current_time
 
         return notes

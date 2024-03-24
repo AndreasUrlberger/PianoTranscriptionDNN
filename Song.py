@@ -25,7 +25,7 @@ class Song:
     def in_seconds(self, ticks) -> float:
         return ticks / self.ticks_per_second
 
-    def to_start_time_tensor(self, discretization_step: int) -> torch.Tensor:
+    def to_start_time_slower(self, discretization_step: int) -> torch.Tensor:
         # Discretize song into time intervals    
         num_steps: int = math.ceil(self.song_length * discretization_step)
         num_notes = len(self.notes)
@@ -37,7 +37,6 @@ class Song:
         note_index = 0
         for step in range(num_steps):
             # Calculate interval start and end in ticks.
-            interval_start = float(step) * self.ticks_per_second / discretization_step
             interval_end = float(step + 1) * self.ticks_per_second / discretization_step
 
             # Check notes starting or stopping in current interval.
@@ -67,8 +66,60 @@ class Song:
                     
         return discrete_frames
     
+
+    def to_start_time_tensor(self, discretization_step: int) -> torch.Tensor:
+        # Discretize song into time intervals    
+        num_steps: int = math.ceil(self.song_length * discretization_step)
+        midi_note_range = 128
+        
+
+        notes_tensor, interval_start_times, interval_end_times = self.prepare_arrays(discretization_step)
+
+        start_times = notes_tensor[:, 0]
+        end_times = notes_tensor[:, 1]
+        interval_start_times = interval_start_times.unsqueeze(1)
+        interval_end_times = interval_end_times.unsqueeze(1)
+        active_notes = self.active_notes(interval_start_times, interval_end_times, start_times, end_times)
+
+        discrete_frames = self.discrete_frames_calc(num_steps, notes_tensor, active_notes)
+        
+        return discrete_frames
+    
+    def discrete_frames_calc(self, num_steps, notes_tensor, active_notes):
+        discrete_frames = torch.zeros(num_steps, 128)
+        note_values = notes_tensor[:, 2]
+        
+        unique_note_values = torch.unique(note_values)
+        # Get for each unique note value the indices of the notes with the same value in note_values tensor in vectorized / tensor form.
+        note_indices = [torch.nonzero(note_values == note_value).flatten() for note_value in unique_note_values]
+
+        # For each unique note value, sum the activations of the notes with the same value.
+        # These two lines are the most time consuming part of the function. Maybe we could vectorize this part as well somehow.
+        sum_notes = [torch.sum(active_notes[:, indices], dim=1) for indices in note_indices]
+        for index, note_value in enumerate(unique_note_values):
+            discrete_frames[:, note_value] = sum_notes[index]
+        
+        return discrete_frames
+
+    def active_notes(self, interval_start_times, interval_end_times, start_times, end_times):
+        active_notes = (start_times <= interval_start_times) & (end_times >= interval_end_times)
+        return active_notes
+
+
+    def prepare_arrays(self, discretization_step: int):
+        num_steps: int = math.ceil(self.song_length * discretization_step)
+
+        notes_tensor = torch.stack([torch.tensor([n.start_time, n.end_time, n.value]) for n in self.notes])
+        interval_start_times = torch.arange(0, num_steps) * self.ticks_per_second / discretization_step
+        interval_end_times = torch.arange(1, num_steps + 1) * self.ticks_per_second / discretization_step
+
+        return notes_tensor, interval_start_times, interval_end_times
+
+    
     def start_time_tensor_to_midi(tensor: torch.Tensor, out_path, discretization_step: int, bpm = 120, tempo = 500000, note_threshold = 0.5):
         default_velocity = 100
+
+        tensor = tensor.to('cpu')
 
         # Add one zero tensor to the end of the given tensor to make sure all notes are lifted at the end.
         tensor = torch.cat((tensor, torch.zeros(1, tensor.shape[1])), 0)
@@ -93,7 +144,7 @@ class Song:
         last_tick = 0
 
         for step in range(tensor.shape[0]):
-            if step % 10000 == 0:
+            if step % 40000 == 0:
                 print(f"Processing step {step} of {tensor.shape[0]}")
 
             # current_second = step / discretization_step
