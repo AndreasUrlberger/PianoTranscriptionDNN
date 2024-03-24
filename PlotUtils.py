@@ -280,4 +280,5 @@ def plot_tensor_as_image(midi_tensor: torch.Tensor, figure_shape: tuple = (40, 5
   midi_tensor = midi_tensor.to('cpu')
   plt.figure(figsize=figure_shape)
   plt.imshow(midi_tensor, aspect='auto')
+  plt.colorbar()
   plt.show()

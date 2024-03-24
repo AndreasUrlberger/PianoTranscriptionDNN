@@ -1,7 +1,7 @@
 import torch
 import math
 import numpy
-from Note import Note
+from data.Note import Note
 from typing import List
 from mido import MidiFile, MidiTrack, Message
 

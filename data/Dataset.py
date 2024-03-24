@@ -11,8 +11,8 @@ import math
 from typing import Callable
 
 from mido import MidiFile
-from Note import Note
-from Song import Song
+from data.Note import Note
+from data.Song import Song
 
 
 class DatasetUtils:
