@@ -69,7 +69,6 @@ class DatasetUtils:
        
         # Fill up last audio chunk with zeros as padding
         missing_samples = audio_chunk_length - (audio_tensor.shape[0] % audio_chunk_length)
-        print('missing samples: ', missing_samples)
         if missing_samples > 0:
             audio_tensor = torch.cat((audio_tensor, torch.zeros(missing_samples)))
         chunked_audio_tensor = audio_tensor.reshape((num_audio_chunks, audio_chunk_length))
@@ -282,8 +281,8 @@ class MidiTransformerDataset(torch.utils.data.IterableDataset):
                 midi_sequence = midi_tensor[start_index:end_index, :]
                 audio_chunks = audio_sequence.reshape(self.sequence_length, -1)
                 midi_chunks = midi_sequence.reshape(self.sequence_length, -1)
-                padding_mask = torch.ones(self.sequence_length, dtype=torch.bool)
-                # TODO How to return the padding mask?
+                # True if the chunk is a padding chunk
+                padding_mask = torch.zeros(self.sequence_length, dtype=torch.bool)
                 yield audio_chunks, midi_chunks, padding_mask
 
             # Last sequence
@@ -295,10 +294,12 @@ class MidiTransformerDataset(torch.utils.data.IterableDataset):
                 midi_sequence = torch.cat([midi_tensor[start_index:, :], torch.zeros((padding_length, midi_tensor.shape[1]))])
                 audio_chunks = audio_sequence.reshape(self.sequence_length, -1)
                 midi_chunks = midi_sequence.reshape(self.sequence_length, -1)
-                padding_mask = torch.zeros(self.sequence_length, dtype=torch.bool)
-                padding_mask[:length_last_sequence] = True
-                # TODO How to return the padding mask?
+                # True if the chunk is a padding chunk
+                padding_mask = torch.ones(self.sequence_length, dtype=torch.bool)
+                padding_mask[:length_last_sequence] = False
                 yield audio_chunks, midi_chunks, padding_mask
+
+            # TODO Might be a good idea use a special padding token and a 'start of song' and 'end of song' token. Might not be too important as songs are usually never zero except at the start and end.
 
     def __len__(self):
         return self.length
