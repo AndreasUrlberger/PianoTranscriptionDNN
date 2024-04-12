@@ -275,7 +275,9 @@ def benchmark_resample(
     elapsed = time.time() - begin
     return elapsed / iters
   
-def plot_tensor_as_image(midi_tensor: torch.Tensor, figure_shape: tuple = (40, 5)):
+def plot_tensor_as_image(midi_tensor: torch.Tensor, figure_shape: tuple = (40, 5), threshold: float = None):
+  if threshold is not None:
+    midi_tensor = midi_tensor > threshold
   # Render/plot the midi tensor as an image
   midi_tensor = midi_tensor.to('cpu')
   plt.figure(figsize=figure_shape)

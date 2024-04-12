@@ -8,7 +8,8 @@ import torch
 from torch import nn, Tensor
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
 from torch.utils.data import dataset
-from models.Embedding import WaveformEmbedding, MidiEmbedding
+from models.Embedding import WaveformEmbedding, MidiEmbedding    
+from prettytable import PrettyTable
 
 class TransformerModel(nn.Module):
 
@@ -17,15 +18,16 @@ class TransformerModel(nn.Module):
         ntoken: Number of tokens in the vocabulary
         d_model: Dimension of Embedding (Dimension of single sample e.g. 480)
     """
-    def __init__(self, output_depth: int, d_model: int, nhead: int, d_hid: int, nlayers: int, dropout: float = 0.5, params: dict = {}):
+    def __init__(self, output_depth: int, d_model: int, nhead: int, d_hid: int, nlayers: int, dropout: float = 0.1, params: dict = {}):
         super().__init__()
         self.device = params.get('device', 'cpu')
         self.model_type = 'Transformer'
         self.d_model = d_model
+        self.output_depth = output_depth
         self.src_embedding = WaveformEmbedding(params={"embedding_input_size": 480, "embedding_size": d_model, "embedding_hidden_size": d_model})
         self.tgt_embedding = MidiEmbedding(params={"embedding_input_size": 128, "embedding_size": d_model, "embedding_hidden_size": d_model})
         self.pos_encoder = PositionalEncoding(d_model, dropout)
-        self.transformer = nn.Transformer(d_model=d_model, nhead=nhead, num_encoder_layers=nlayers, num_decoder_layers=nlayers, dim_feedforward=d_hid, dropout=dropout, batch_first=True)
+        self.transformer = nn.Transformer(d_model=d_model, nhead=nhead, num_encoder_layers=nlayers, num_decoder_layers=nlayers, dim_feedforward=d_hid, dropout=dropout, batch_first=True, device=self.device)
         self.final_linear = nn.Linear(d_model, output_depth)
         
         self.loss_fn = torch.nn.BCEWithLogitsLoss()
@@ -42,23 +44,27 @@ class TransformerModel(nn.Module):
         tgt = self.tgt_embedding(tgt)
         tgt = self.pos_encoder(tgt)
 
-        src_mask = nn.Transformer.generate_square_subsequent_mask(src_seq_len).to(self.device)
+        # src_mask = nn.Transformer.generate_square_subsequent_mask(src_seq_len).to(self.device)
         tgt_mask = nn.Transformer.generate_square_subsequent_mask(tgt_seq_len).to(self.device)
+        src_mask = None
+        # tgt_mask = None
 
         output = self.transformer.forward(src=src, tgt=tgt, src_mask=src_mask, tgt_mask=tgt_mask, src_key_padding_mask=src_pad_mask, tgt_key_padding_mask=tgt_pad_mask)
         output = self.final_linear(output)
         return output
     
 
-    def training_step(self, src, tgt, src_pad_mask, tgt_pad_mask):
+    def training_step(self, src, tgt, src_mask, tgt_mask):
+        # TODO Might want to standardize the audio input somehow, e.g. same mean and std.
+        # Add start and end tokens to the target.
         # switch to train mode
         self.train()
         # Reset gradients
         self.optimizer.zero_grad()
-        src, tgt, src_pad_mask, tgt_pad_mask = src.to(self.device), tgt.to(self.device), src_pad_mask.to(self.device), tgt_pad_mask.to(self.device)
+        src, tgt, src_mask, tgt_mask = src.to(self.device), tgt.to(self.device), src_mask.to(self.device), tgt_mask.to(self.device)
 
         # Prediction
-        pred_midi = self.forward(src, tgt, src_pad_mask, tgt_pad_mask)
+        pred_midi = self.forward(src, tgt, src_mask, tgt_mask)
         loss = self.loss_fn(pred_midi, tgt)
         # Backpropagation
         loss.backward()
@@ -77,32 +83,75 @@ class TransformerModel(nn.Module):
             loss = self.loss_fn(pred_midi, tgt)
 
         return loss.item()
+      
+    def predict(self, src, src_pad_mask = None, threshold=0.5):
+        self.eval()
+        with torch.no_grad():
+            src = src.to(self.device)
+            # src = (song_length, input_size)
+            song_length, input_size = src.shape
+            src_pad_mask = torch.zeros(self.d_model, dtype=torch.bool, device=self.device)
+
+            # Pad input if shorter than a single sequence
+            if song_length < self.d_model:
+                src = torch.cat((src, torch.zeros(song_length, self.d_model - input_size, device=self.device)), dim=1)
+                src_pad_mask[song_length:] = True
+
+            output = torch.zeros(song_length, self.output_depth, device=self.device)
+            # output[0, :] = torch.ones(self.output_depth, device=self.device)
+            tgt_mask = torch.ones(self.d_model, dtype=torch.bool, device=self.device)
+
+            # First notes of the song (sliding window not filled yet)
+            for i in range(self.d_model):
+                tgt_mask[i] = False
+                prediction = self.forward(src[0:self.d_model].unsqueeze(0), output[0:self.d_model].unsqueeze(0), src_pad_mask.unsqueeze(0), tgt_mask.unsqueeze(0)).squeeze()
+                # new_notes = torch.where(prediction[0] > threshold, torch.tensor(1, device=self.device), torch.tensor(0, device=self.device))
+                new_notes = prediction[0]
+                output[i] = new_notes
+            
+            # tgt_mask is filled with False now.
+            # src_mask is filled with False as well, since otherwise the below code would not execute (only executes if song_length > self.d_model).
+            # Remaining notes of the song (sliding window filled)
+            for i in range(self.d_model, song_length):
+                prediction = self.forward(src[i:i+self.d_model].unsqueeze(0), output[i:i+self.d_model].unsqueeze(0), src_pad_mask.unsqueeze(0), tgt_mask.unsqueeze(0)).squeeze()
+                # new_notes = torch.where(prediction[0] > threshold, torch.tensor(1, device=self.device), torch.tensor(0, device=self.device))
+                new_notes = prediction[0]
+                output[i] = new_notes
+
+        return output
     
-    def predict_tut(self, model, input_sequence, max_length=15, SOS_token=2, EOS_token=3):
-        model.eval()
+    def predict2(self, src, max_length=512, threshold=0.5):
+        self.eval()
+        with torch.no_grad():
+
+            y_input = torch.zeros(1, self.output_depth, dtype=src.dtype, device=self.device)
+
+            seq_length, input_size = src.shape
+
+            for i in range(max_length):
+                if i % 100 == 0:
+                    print(f"Predicting note {i}...")
+                pred = self.forward(src.unsqueeze(0), y_input[i:i+1].unsqueeze(0)).squeeze(0)
+                pred = pred[0].unsqueeze(0)
+                # We use BCEWithLogitsLoss, so when training we don't need to apply sigmoid to the output, however, when predicting, we need to apply sigmoid to the output.
+                pred = torch.sigmoid(pred)
+                
+                # new_notes = torch.where(pred[0].unsqueeze(0) > threshold, torch.tensor(1, device=self.device), torch.tensor(0, device=self.device))
+
+                # Concatenate previous input with predicted best word
+                y_input = torch.cat((y_input, pred))
+
+            return y_input
+    
+    def get_tgt_mask(self, size) -> torch.tensor:
+        # Generates a squeare matrix where the each row allows one word more to be seen
+        mask = torch.tril(torch.ones(size, size) == 1) # Lower triangular matrix
+        mask = mask.float()
+        mask = mask.masked_fill(mask == 0, float('-inf')) # Convert zeros to -inf
+        mask = mask.masked_fill(mask == 1, float(0.0)) # Convert ones to 0
         
-        y_input = torch.tensor([[SOS_token]], dtype=torch.long, device=self.device)
+        return mask
 
-        num_tokens = len(input_sequence[0])
-
-        for _ in range(max_length):
-            # Get source mask
-            tgt_mask = model.get_tgt_mask(y_input.size(1)).to(self.device)
-            
-            pred = model(input_sequence, y_input, tgt_mask)
-            
-            next_item = pred.topk(1)[1].view(-1)[-1].item() # num with highest probability
-            next_item = torch.tensor([[next_item]], device=self.device)
-
-            # Concatenate previous input with predicted best word
-            y_input = torch.cat((y_input, next_item), dim=1)
-
-            # Stop if model predicts end of sentence
-            if next_item.view(-1).item() == EOS_token:
-                break
-
-        return y_input.view(-1).tolist()
-    
     def save(self, path):
         """
         Save model with its parameters to the given path. Conventionally the
@@ -128,6 +177,19 @@ class TransformerModel(nn.Module):
         """
         torch.save(self.state_dict(), path)
     
+    def count_parameters(self):
+        table = PrettyTable(["Modules", "Parameters"])
+        total_params = 0
+        for name, parameter in self.named_parameters():
+            if not parameter.requires_grad:
+                continue
+            params = parameter.numel()
+            table.add_row([name, params])
+            total_params += params
+        print(table)
+        print(f"Total Trainable Params: {total_params}")
+        return total_params
+        
 class PositionalEncoding(nn.Module):
 
     def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000):
@@ -148,7 +210,6 @@ class PositionalEncoding(nn.Module):
         """
         x = x + self.pe[:x.size(0)]
         return self.dropout(x)
-
 
 class MidiTransformer(nn.Module):
     """

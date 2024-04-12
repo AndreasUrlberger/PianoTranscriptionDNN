@@ -16,6 +16,7 @@ midi2audio
 tqdm
 tensorboard
 protobuf
+prettytable
 
 # Other
 # Strip away output of jupyter notebooks (used before commit to git) (I don't think this actually works)
