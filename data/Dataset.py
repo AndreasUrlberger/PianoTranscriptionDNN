@@ -16,26 +16,38 @@ from data.Song import Song
 
 
 class DatasetUtils:
+
     def resample_audio(sample_rate_from: int, sample_rate_to: int, audio_tensor: torch.Tensor) -> torch.Tensor:
         resampler = torchaudio.transforms.Resample(
             sample_rate_from, sample_rate_to)
         return resampler(audio_tensor)
 
-    def create_dataset_files(dataset_dir, output_dir):
+    def create_dataset_files(dataset_dir, output_dir, include_length=False, discretization=100):
         with open(os.path.join(dataset_dir, 'maestro-v3.0.0.csv')) as csvfile, open(os.path.join(output_dir, 'train.txt'), 'w') as train_file, open(os.path.join(output_dir, 'validation.txt'), 'w') as validation_file, open(os.path.join(output_dir, 'test.txt'), 'w') as test_file:
             midi_reader = csv.reader(csvfile)
             headers = next(midi_reader)
             header_to_index = {header: index for index,
                                header in enumerate(headers)}
 
-            for midi in midi_reader:
+            for index, midi in enumerate(midi_reader):
+                if index % 100 == 0:
+                    print(f'Progress: {index}')
                 split = midi[header_to_index['split']]
                 midi_filename = midi[header_to_index['midi_filename']]
                 midi_path = os.path.join(dataset_dir, midi_filename)
                 audio_filename = midi[header_to_index['audio_filename']]
                 audio_path = os.path.join(dataset_dir, audio_filename)
 
+                if include_length:
+                    midi = MidiFile(midi_path)
+                    midi_length: int = math.ceil(midi.length * discretization)
+                    midi_path += ':' + str(midi_length)
+                    audio, sample_rate = torchaudio.load(audio_path)
+                    channels, audio_length = audio.shape
+                    audio_path += ':' + str(audio_length)
+                
                 out_line = audio_path + '\n' + midi_path + '\n'
+
                 if split == 'train':
                     utils.write_file_completely(train_file, out_line)
                 elif split == 'validation':
@@ -43,7 +55,7 @@ class DatasetUtils:
                 elif split == 'test':
                     utils.write_file_completely(test_file, out_line)
 
-    def transform_midi_file(midi_file, discretization) -> torch.Tensor:
+    def transform_midi_file(midi_file, discretization, start_token=1, end_token=0) -> torch.Tensor:
         parsed_midi_file = MidiFile(midi_file)
         notes = Note.midi_to_notes(parsed_midi_file)
 
@@ -101,21 +113,26 @@ class MidiDataset(torch.utils.data.Dataset):
         paths_file = os.path.join(dataset_dir, file_name)
         self.resamplers = {}
         self.waveform_chunk_length = self.sample_rate // self.discretization
+        self.start_token = 1
+        self.end_token = 0
 
         with open(paths_file) as f:
             lines = f.read().splitlines()
-            self.audio_files = lines[::2]
-            self.midi_files = lines[1::2]
+            audio_files = lines[::2]
+            audio_files = [line.split(':') for line in audio_files]
+            self.audio_files = audio_files[:][0]
+            midi_files = lines[1::2]
+            midi_files = [line.split(':') for line in midi_files]
+            self.midi_files = midi_files[:][0]
 
     def __getitem__(self, key):
         audio_file = self.audio_files[key]
         midi_file = self.midi_files[key]
 
-        midi_tensor = DatasetUtils.transform_midi_file(
-            midi_file, self.discretization)
+        midi_tensor = DatasetUtils.transform_midi_file(midi_file, self.discretization)
+        midi_tensor = torch.cat([torch.full((1, midi_tensor.shape[1]), self.start_token), midi_tensor, torch.full((1, midi_tensor.shape[1]), self.end_token)])
         midi_chunk_length = midi_tensor.shape[0]
-        audio_tensor = DatasetUtils.transform_audio_file(
-            audio_file, self._resample_audio, midi_chunk_length, self.waveform_chunk_length)
+        audio_tensor = DatasetUtils.transform_audio_file(audio_file, self._resample_audio, midi_chunk_length, self.waveform_chunk_length)
 
         return audio_tensor, midi_tensor
 
@@ -126,8 +143,7 @@ class MidiDataset(torch.utils.data.Dataset):
         return self.midi_files[key]
 
     def __len__(self):
-        # Probably unnecessary
-        return len(min(self.audio_files, self.midi_files))
+        return len(self.audio_files)
 
     def _resample_audio(self, file_sample_rate: int, audio_tensor: torch.Tensor) -> torch.Tensor:
         # Resample to self.sample_rate if necessary
@@ -152,13 +168,22 @@ class MidiIterDataset(torch.utils.data.IterableDataset):
         paths_file = os.path.join(dataset_dir, file_name)
         self.resamplers = {}
         self.waveform_chunk_length = self.sample_rate // self.discretization
+        self.start_token = 1
+        self.end_token = 0
 
         with open(paths_file) as f:
             lines = f.read().splitlines()
-            self.audio_files = lines[::2]
-            self.midi_files = lines[1::2]
+            audio_files = lines[::2]
+            audio_files = [line.split(':') for line in audio_files]
+            self.audio_files = audio_files[:][0]
+            self.audio_lengths = [int(line[1]) for line in audio_files]
+            midi_files = lines[1::2]
+            midi_files = [line.split(':') for line in midi_files]
+            self.midi_files = midi_files[:][0]
+            self.midi_lengths = [int(line[1]) for line in midi_files] 
+
         if total_length is None:
-            self.length = MidiIterDataset.compute_length(self.midi_files, self.discretization)
+            self.length = self.compute_length()
         else:
             self.length = total_length
 
@@ -181,6 +206,7 @@ class MidiIterDataset(torch.utils.data.IterableDataset):
                 midi_tensor = torch.load(precomp_path)
             else:
                 midi_tensor = DatasetUtils.transform_midi_file(midi_file, self.discretization)
+            midi_tensor = torch.cat([torch.full((1, midi_tensor.shape[1]), self.start_token), midi_tensor, torch.full((1, midi_tensor.shape[1]), self.end_token)])
             midi_chunk_length = midi_tensor.shape[0]
             audio_tensor = DatasetUtils.transform_audio_file(audio_file, self._resample_audio, midi_chunk_length, self.waveform_chunk_length)
 
@@ -190,7 +216,7 @@ class MidiIterDataset(torch.utils.data.IterableDataset):
     def __len__(self):
         return self.length
 
-    def compute_length(file_paths, discretization):
+    def compute_length(self):
         """
         Loops through all files and counts the number of chunks in each file.
 
@@ -198,10 +224,9 @@ class MidiIterDataset(torch.utils.data.IterableDataset):
             file_paths: List of files to loop through
         """
         length = 0
-        for file in file_paths:
-            midi_file = MidiFile(file)
-            midi_frames = math.ceil(midi_file.length * discretization)
-            length += midi_frames
+        for midi_length in self.midi_lengths:
+            # Add two to account for the start and end tokens
+            length += midi_length + 2
 
         print('computed length: ', length)
         return length
@@ -209,7 +234,7 @@ class MidiIterDataset(torch.utils.data.IterableDataset):
 
 
 class MidiTransformerDataset(torch.utils.data.IterableDataset):
-    def __init__(self, dataset_dir, split, discretization: int, total_length: int = None, precomputed_midi: bool = False, sample_rate: int = 48000, sequence_length: int = 512, collate_fn = None):
+    def __init__(self, dataset_dir, split, discretization: int, total_length: int = None, precomputed_midi: bool = False, sample_rate: int = 48000, sequence_length: int = 512, start_token = -1, end_token = 0):
         assert sample_rate % discretization == 0, 'The sample rate must be divisible by the discretization'
         self.sample_rate = sample_rate
         self.audio_chunk_length = sample_rate // discretization
@@ -220,25 +245,24 @@ class MidiTransformerDataset(torch.utils.data.IterableDataset):
         file_name = (split + '.txt').lower()
         paths_file = os.path.join(dataset_dir, file_name)
         self.resamplers = {}
-
-        if collate_fn is None:
-            self.collate_fn = MidiTransformerDataset._default_collate_fn
+        self.start_token = start_token
+        self.end_token = end_token
 
         with open(paths_file) as f:
             lines = f.read().splitlines()
-            self.audio_files = lines[::2]
-            self.midi_files = lines[1::2]
+            audio_files = lines[::2]
+            audio_files = [line.split(':') for line in audio_files]
+            self.audio_files = [audio_entry[0] for audio_entry in audio_files]
+            self.audio_lengths = [int(audio_entry[1]) for audio_entry in audio_files]
+            midi_files = lines[1::2]
+            midi_files = [line.split(':') for line in midi_files]
+            self.midi_files = [midi_entry[0] for midi_entry in midi_files]
+            self.midi_lengths = [int(midi_entry[1]) for midi_entry in midi_files] 
 
         if total_length is None:
-            self.length = MidiIterDataset.compute_length(self.midi_files, self.discretization)
+            self.length = self.compute_length()
         else:
             self.length = total_length
-
-    def _default_collate_fn(batch, max_length):
-        # Shape of batch: (batch_size, sample_length)
-        pass
-
-
 
     def _resample_audio(self, file_sample_rate: int, audio_tensor: torch.Tensor) -> torch.Tensor:
         # Resample to self.sample_rate if necessary
@@ -259,11 +283,14 @@ class MidiTransformerDataset(torch.utils.data.IterableDataset):
                 midi_tensor = torch.load(precomp_path)
             else:
                 midi_tensor = DatasetUtils.transform_midi_file(midi_file, self.discretization)
+
+            midi_tensor = torch.cat([torch.full((1, midi_tensor.shape[1]), self.start_token), midi_tensor, torch.full((1, midi_tensor.shape[1]), self.end_token)])
             num_midi_chunks = midi_tensor.shape[0]
+
             audio_tensor = DatasetUtils.transform_audio_file(audio_file, self._resample_audio, num_midi_chunks, self.audio_chunk_length)
             num_audio_chunks = audio_tensor.shape[0]
 
-            # Pad both tensors to the same number of chunks=-]
+            # Pad both tensors to the same number of chunks
             if num_midi_chunks > num_audio_chunks:
                 padding = torch.zeros((num_midi_chunks - num_audio_chunks, audio_tensor.shape[1]))
                 audio_tensor = torch.cat((audio_tensor, padding))
@@ -299,12 +326,11 @@ class MidiTransformerDataset(torch.utils.data.IterableDataset):
                 padding_mask[:length_last_sequence] = False
                 yield audio_chunks, midi_chunks, padding_mask
 
-            # TODO Might be a good idea use a special padding token and a 'start of song' and 'end of song' token. Might not be too important as songs are usually never zero except at the start and end.
 
     def __len__(self):
         return self.length
 
-    def compute_length(file_paths, discretization):
+    def compute_length(self):
         """
         Loops through all files and counts the number of chunks in each file.
 
@@ -312,10 +338,11 @@ class MidiTransformerDataset(torch.utils.data.IterableDataset):
             file_paths: List of files to loop through
         """
         length = 0
-        for file in file_paths:
-            midi_file = MidiFile(file)
-            midi_frames = math.ceil(midi_file.length * discretization)
-            length += midi_frames
+        for midi_length in self.midi_lengths:
+            # Add two to account for the start and end tokens
+            # samples = midi_length + 2
+            samples = midi_length
+            length += (samples + self.sequence_length - 1) // self.sequence_length
 
         print('computed length: ', length)
         return length

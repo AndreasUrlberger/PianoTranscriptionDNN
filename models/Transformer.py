@@ -24,6 +24,8 @@ class TransformerModel(nn.Module):
         self.model_type = 'Transformer'
         self.d_model = d_model
         self.output_depth = output_depth
+        self.start_token = params.get('start_token', -1)
+        self.end_token = params.get('end_token', 0) 
         self.src_embedding = WaveformEmbedding(params={"embedding_input_size": 480, "embedding_size": d_model, "embedding_hidden_size": d_model})
         self.tgt_embedding = MidiEmbedding(params={"embedding_input_size": 128, "embedding_size": d_model, "embedding_hidden_size": d_model})
         self.pos_encoder = PositionalEncoding(d_model, dropout)
@@ -56,16 +58,21 @@ class TransformerModel(nn.Module):
 
     def training_step(self, src, tgt, src_mask, tgt_mask):
         # TODO Might want to standardize the audio input somehow, e.g. same mean and std.
-        # Add start and end tokens to the target.
+        # TODO Start and end tokens are negative, which is not possible after a sigmoid. How to encode start and end tokens alternatively? All ones?
         # switch to train mode
         self.train()
         # Reset gradients
         self.optimizer.zero_grad()
         src, tgt, src_mask, tgt_mask = src.to(self.device), tgt.to(self.device), src_mask.to(self.device), tgt_mask.to(self.device)
 
+        # We need to shift the input target by one to the right and add a start token if this is the beginning of a song. Since we don't know here if this is the beginning of a song, we instead shift the output target by one to the left, the start_token will be added in the dataset itself. This also means that our sequence length will be one shorter.
+        input_target = tgt[:, :-1]
+        output_target = tgt[:, 1:]
+        tgt_mask = tgt_mask[:, :-1]
+
         # Prediction
-        pred_midi = self.forward(src, tgt, src_mask, tgt_mask)
-        loss = self.loss_fn(pred_midi, tgt)
+        pred_midi = self.forward(src, input_target, src_mask, tgt_mask)
+        loss = self.loss_fn(pred_midi, output_target)
         # Backpropagation
         loss.backward()
         # Update parameters
@@ -77,7 +84,12 @@ class TransformerModel(nn.Module):
         # Set model to evaluation mode
         self.eval()
         with torch.no_grad():
-            src, tgt, src_pad_mask, tgt_pad_mask = src.to(self.device), tgt.to(self.device), src_pad_mask.to(self.device), tgt_pad_mask.to(self.device)            
+            src, tgt, src_pad_mask, tgt_pad_mask = src.to(self.device), tgt.to(self.device), src_pad_mask.to(self.device), tgt_pad_mask.to(self.device)
+                
+            input_target = tgt[:, :-1]
+            output_target = tgt[:, 1:]
+            tgt_mask = tgt_mask[:, :-1]
+                    
             # Prediction
             pred_midi = self.forward(src, tgt, src_pad_mask, tgt_pad_mask)
             loss = self.loss_fn(pred_midi, tgt)
@@ -120,13 +132,12 @@ class TransformerModel(nn.Module):
 
         return output
     
-    def predict2(self, src, max_length=512, threshold=0.5):
+    def predict2(self, src: torch.tensor, max_length=512, threshold=0.5):
         self.eval()
         with torch.no_grad():
 
-            y_input = torch.zeros(1, self.output_depth, dtype=src.dtype, device=self.device)
-
-            seq_length, input_size = src.shape
+            # y_input = torch.zeros(1, self.output_depth, dtype=src.dtype, device=self.device)
+            y_input = torch.full((1, self.output_depth), self.start_token, dtype=src.dtype, device=self.device)
 
             for i in range(max_length):
                 if i % 100 == 0:
@@ -136,7 +147,7 @@ class TransformerModel(nn.Module):
                 # We use BCEWithLogitsLoss, so when training we don't need to apply sigmoid to the output, however, when predicting, we need to apply sigmoid to the output.
                 pred = torch.sigmoid(pred)
                 
-                # new_notes = torch.where(pred[0].unsqueeze(0) > threshold, torch.tensor(1, device=self.device), torch.tensor(0, device=self.device))
+                # pred = torch.where(pred[0].unsqueeze(0) > threshold, torch.tensor(1, device=self.device), torch.tensor(0, device=self.device))
 
                 # Concatenate previous input with predicted best word
                 y_input = torch.cat((y_input, pred))
