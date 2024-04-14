@@ -21,6 +21,16 @@ class DatasetUtils:
         resampler = torchaudio.transforms.Resample(
             sample_rate_from, sample_rate_to)
         return resampler(audio_tensor)
+    
+    def calc_midi_length(midi_path, discretization):
+        midi = MidiFile(midi_path)
+        midi_length: int = math.ceil(midi.length * discretization)
+        return midi_length
+
+    def calc_audio_length(audio_path):
+        audio, sample_rate = torchaudio.load(audio_path)
+        channels, audio_length = audio.shape
+        return audio_length
 
     def create_dataset_files(dataset_dir, output_dir, include_length=False, discretization=100):
         with open(os.path.join(dataset_dir, 'maestro-v3.0.0.csv')) as csvfile, open(os.path.join(output_dir, 'train.txt'), 'w') as train_file, open(os.path.join(output_dir, 'validation.txt'), 'w') as validation_file, open(os.path.join(output_dir, 'test.txt'), 'w') as test_file:
@@ -39,11 +49,9 @@ class DatasetUtils:
                 audio_path = os.path.join(dataset_dir, audio_filename)
 
                 if include_length:
-                    midi = MidiFile(midi_path)
-                    midi_length: int = math.ceil(midi.length * discretization)
+                    midi_length: int = calc_midi_length(midi_path, discretization)
                     midi_path += ':' + str(midi_length)
-                    audio, sample_rate = torchaudio.load(audio_path)
-                    channels, audio_length = audio.shape
+                    audio_length = calc_audio_length(audio_path)
                     audio_path += ':' + str(audio_length)
                 
                 out_line = audio_path + '\n' + midi_path + '\n'
@@ -231,10 +239,8 @@ class MidiIterDataset(torch.utils.data.IterableDataset):
         print('computed length: ', length)
         return length
     
-
-
 class MidiTransformerDataset(torch.utils.data.IterableDataset):
-    def __init__(self, dataset_dir, split, discretization: int, total_length: int = None, precomputed_midi: bool = False, sample_rate: int = 48000, sequence_length: int = 512, start_token = -1, end_token = 0):
+    def __init__(self, dataset_dir, split, discretization: int, total_length: int = None, precomputed_midi: bool = False, sample_rate: int = 48000, sequence_length: int = 512, start_token = -1, end_token = 0, no_file_lengths = False):
         assert sample_rate % discretization == 0, 'The sample rate must be divisible by the discretization'
         self.sample_rate = sample_rate
         self.audio_chunk_length = sample_rate // discretization
@@ -253,11 +259,15 @@ class MidiTransformerDataset(torch.utils.data.IterableDataset):
             audio_files = lines[::2]
             audio_files = [line.split(':') for line in audio_files]
             self.audio_files = [audio_entry[0] for audio_entry in audio_files]
-            self.audio_lengths = [int(audio_entry[1]) for audio_entry in audio_files]
             midi_files = lines[1::2]
             midi_files = [line.split(':') for line in midi_files]
             self.midi_files = [midi_entry[0] for midi_entry in midi_files]
-            self.midi_lengths = [int(midi_entry[1]) for midi_entry in midi_files] 
+            if no_file_lengths:
+                self.audio_lengths = [DatasetUtils.calc_audio_length(audio) for audio in self.audio_files]
+                self.midi_lengths = [DatasetUtils.calc_midi_length(midi, discretization) for midi in self.midi_files]
+            else:
+                self.audio_lengths = [int(audio_entry[1]) for audio_entry in audio_files]
+                self.midi_lengths = [int(midi_entry[1]) for midi_entry in midi_files] 
 
         if total_length is None:
             self.length = self.compute_length()
