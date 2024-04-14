@@ -1,4 +1,4 @@
-from mido import MidiFile, MidiTrack, Message
+from mido import MidiFile
 
 class Note:
     def __init__(self, value, start_time, end_time):
@@ -13,6 +13,9 @@ class Note:
         open_notes = {}
         notes = []
         current_time = 0
+
+        sustain_pedal_threshold = 10
+        sustain_pedal_key = 128
         # First track contains meta messages, second track contains actual notes.
         for msg in midi.tracks[1]:
             
@@ -32,5 +35,19 @@ class Note:
                 if msg.note in open_notes:
                     print(f"Open note already contained, something must be wrong. File: {midi.filename}")
                 open_notes[msg.note] = current_time
+
+            elif msg.type == 'control_change' and msg.control == 64:
+                # Sustain pedal.
+                if msg.value > sustain_pedal_threshold:
+                    # Sustain pedal pressed (note_on).
+                    # Only add sustain pedal note if it is not already in open_notes. (This is different from regular notes, for which there is only a single note_on event corresponding to a note_off event.)
+                    if sustain_pedal_key not in open_notes:
+                        open_notes[sustain_pedal_key] = current_time
+                else:
+                    # Sustain pedal released (note_off).
+                    if sustain_pedal_key in open_notes:
+                        start_time = open_notes[sustain_pedal_key]
+                        notes.append(Note(sustain_pedal_key, start_time, current_time))
+                        del open_notes[sustain_pedal_key]
 
         return notes

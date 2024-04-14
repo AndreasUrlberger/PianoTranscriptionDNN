@@ -23,7 +23,7 @@ class WaveformEmbedding(nn.Module):
 class MidiEmbedding (nn.Module):
     def __init__(self, params = {}):
         super().__init__()
-        self.input_size = params.get("embedding_input_size", 128)
+        self.input_size = params.get("embedding_input_size", 129)
         self.embedding_size = params.get("embedding_size", 512)
         self.hidden_size = params.get("embedding_hidden_size", 512)
 

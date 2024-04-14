@@ -3,7 +3,7 @@ import math
 import numpy
 from data.Note import Note
 from typing import List
-from mido import MidiFile, MidiTrack, Message
+from mido import MidiFile, MidiTrack, Message, MetaMessage
 
 
 class Song:
@@ -11,25 +11,24 @@ class Song:
         self.notes =notes.copy()
         self.notes.sort(key=lambda x: x.start_time)
         self.song_length = song_length
-        # Also call PPQ (pulses per quarter note)
-        self.ticks_per_beat = ticks_per_beat
         # Tempo (in microseconds per quarter note) (usually at beginning of midi as meta message 'set_tempo')
-        self.tempo = tempo
-        self.tempo_bpm = 60000000 / tempo
-        self.microseconds_per_tick = tempo / ticks_per_beat
-        self.ticks_per_second = 1000000 / self.microseconds_per_tick
+        self.us_per_quarter_note = tempo
+        self.ticks_per_quarter_note = ticks_per_beat
+
+        self.seconds_per_tick = self.us_per_quarter_note / (self.ticks_per_quarter_note * 1_000_000)
+        self.ticks_per_second = 1 / self.seconds_per_tick
 
     def __repr__(self):
         return f"Song(Length: '{self.song_length:.2f}s', tempo: {self.tempo}, bpm: {self.tempo_bpm}, ticks_per_second: {self.ticks_per_second}, microsec_per_tick: {self.microseconds_per_tick}, notes: {self.notes})"
 
     def in_seconds(self, ticks) -> float:
-        return ticks / self.ticks_per_second
+        return ticks  * self.seconds_per_tick
 
     def to_start_time_slower(self, discretization_step: int) -> torch.Tensor:
         # Discretize song into time intervals    
         num_steps: int = math.ceil(self.song_length * discretization_step)
         num_notes = len(self.notes)
-        midi_note_range = 128
+        midi_note_range = 128 + 1 # sustain pedal
         discrete_frames = torch.zeros(num_steps, midi_note_range)
         open_notes = {}
         
@@ -70,9 +69,7 @@ class Song:
     def to_start_time_tensor(self, discretization_step: int) -> torch.Tensor:
         # Discretize song into time intervals    
         num_steps: int = math.ceil(self.song_length * discretization_step)
-        midi_note_range = 128
         
-
         notes_tensor, interval_start_times, interval_end_times = self.prepare_arrays(discretization_step)
 
         start_times = notes_tensor[:, 0]
@@ -86,7 +83,7 @@ class Song:
         return discrete_frames
     
     def discrete_frames_calc(self, num_steps, notes_tensor, active_notes):
-        discrete_frames = torch.zeros(num_steps, 128)
+        discrete_frames = torch.zeros(num_steps, 129)
         note_values = notes_tensor[:, 2]
         
         unique_note_values = torch.unique(note_values)
@@ -116,43 +113,43 @@ class Song:
         return notes_tensor, interval_start_times, interval_end_times
 
     
-    def start_time_tensor_to_midi(tensor: torch.Tensor, out_path, discretization_step: int, bpm = 120, tempo = 500000, note_threshold = 0.5):
+    def start_time_tensor_to_midi(tensor: torch.Tensor, out_path, discretization_step: int, tempo: int = 500000, note_threshold = 0.5):
         default_velocity = 100
+        sustain_pedal_key = 128
+
+        us_per_quarter_note = tempo
+        ticks_per_quarter_note = 384 # Doesn't really matter, we could use any value here, only relevant for the precision I guess.
+        seconds_per_tick = us_per_quarter_note / (ticks_per_quarter_note * 1_000_000)
+        ticks_per_second = 1 / seconds_per_tick
 
         tensor = tensor.to('cpu')
 
         # Add one zero tensor to the end of the given tensor to make sure all notes are lifted at the end.
         tensor = torch.cat((tensor, torch.zeros(1, tensor.shape[1])), 0)
 
-        # Create a new MIDI file (Type 0)
-        song = MidiFile(type=0)
-        # meta_track = MidiTrack()
-        # meta_track.append(Message('set_tempo', tempo=tempo, time=0))
-        # meta_track.append(Message('end_of_track', time=1))
-        # song.tracks.append(meta_track)
-
-        ticks_per_frame = tempo / discretization_step
-
-        # tempo = tempo
-        # tempo_bpm = 60000000 / tempo
-        # microseconds_per_tick = tempo / ticks_per_beat
-        # ticks_per_second = 1000000 / microseconds_per_tick
+        # Create a new MIDI file (type 1, multiple synchronous tracks)
+        song = MidiFile(type=1, ticks_per_beat=ticks_per_quarter_note)
+        meta_track = MidiTrack()
+        meta_track.append(MetaMessage('set_tempo', tempo=tempo, time=0))
+        meta_track.append(MetaMessage('end_of_track', time=1))
+        song.tracks.append(meta_track)
 
         track = MidiTrack()
 
-        last_notes = torch.zeros(128, dtype=torch.bool)
+        last_notes = torch.zeros(129, dtype=torch.bool)
         last_tick = 0
+
+        total_length_s = tensor.shape[0] / discretization_step
+        total_length_ticks = total_length_s * ticks_per_second
+
+        print(f"total_length_s: {total_length_s}, total_length_ticks: {total_length_ticks}")
 
         for step in range(tensor.shape[0]):
             if step % 40000 == 0:
                 print(f"Processing step {step} of {tensor.shape[0]}")
 
-            # current_second = step / discretization_step
-            # current_micro_second = current_second * 1000000
-            # current_tick = round(current_micro_second / tempo) * 120
-            # current_tick = int(step * ticks_per_frame)
-            bpm = 120 * 4
-            current_tick = int(step * ticks_per_frame / bpm)
+            current_time = step / discretization_step
+            current_tick = int(round(ticks_per_second * current_time))
             
             frame = tensor[step]
             # Assume any note value above 0.5 is a note
@@ -161,11 +158,11 @@ class Song:
 
             # Newly pressed notes.
             new_notes = (pressed_notes & ~last_notes).nonzero().flatten()
-            start_notes = [Message('note_on', note=int(note_value), velocity=default_velocity, time=0) for note_value in new_notes]
+            start_notes = [Message('control_change', control=64, value=64, time=0) if note_value == sustain_pedal_key else Message('note_on', note=int(note_value), velocity=default_velocity, time=0) for note_value in new_notes]
             
             # Released notes.
             released_notes = (~pressed_notes & last_notes).nonzero().flatten()
-            end_notes = [Message('note_on', note=int(note_value), velocity=0, time=0) for note_value in released_notes]
+            end_notes = [Message('control_change', control=64, value=64, time=0) if note_value == sustain_pedal_key else Message('note_on', note=int(note_value), velocity=0, time=0) for note_value in released_notes]
 
             if len(start_notes) > 0:
                 start_notes[0].time = current_tick - last_tick            

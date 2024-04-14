@@ -27,7 +27,7 @@ class TransformerModel(nn.Module):
         self.start_token = params.get('start_token', -1)
         self.end_token = params.get('end_token', 0) 
         self.src_embedding = WaveformEmbedding(params={"embedding_input_size": 480, "embedding_size": d_model, "embedding_hidden_size": d_model})
-        self.tgt_embedding = MidiEmbedding(params={"embedding_input_size": 128, "embedding_size": d_model, "embedding_hidden_size": d_model})
+        self.tgt_embedding = MidiEmbedding(params={"embedding_input_size": 129, "embedding_size": d_model, "embedding_hidden_size": d_model})
         self.pos_encoder = PositionalEncoding(d_model, dropout)
         self.transformer = nn.Transformer(d_model=d_model, nhead=nhead, num_encoder_layers=nlayers, num_decoder_layers=nlayers, dim_feedforward=d_hid, dropout=dropout, batch_first=True, device=self.device)
         self.final_linear = nn.Linear(d_model, output_depth)
