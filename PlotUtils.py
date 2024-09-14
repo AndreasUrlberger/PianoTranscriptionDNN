@@ -281,6 +281,15 @@ def plot_tensor_as_image(midi_tensor: torch.Tensor, figure_shape: tuple = (40, 5
   # Render/plot the midi tensor as an image
   midi_tensor = midi_tensor.to('cpu')
   plt.figure(figsize=figure_shape)
-  plt.imshow(midi_tensor, aspect='auto')
+
+  # Add custom color mapping, 3 colors: black, white, and red for 0, >=1, >=2
+  cmap = matplotlib.colors.ListedColormap(['black', 'white', 'yellow'])
+  bounds = [-0.5, 0.5, 1.5, 2.5]
+  norm = matplotlib.colors.BoundaryNorm(bounds, cmap.N)
+  plt.imshow(midi_tensor, cmap=cmap, norm=norm, aspect='auto')
+
   plt.colorbar()
   plt.show()
+
+def plot_prediction_error(original_midi: torch.tensor, predicted_midi: torch.tensor):
+  pass 
