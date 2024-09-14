@@ -88,7 +88,7 @@ class DatasetUtils:
         num_audio_chunks = (audio_tensor.shape[0] + audio_chunk_length - 1) // audio_chunk_length
        
         # Fill up last audio chunk with zeros as padding
-        missing_samples = audio_chunk_length - (audio_tensor.shape[0] % audio_chunk_length)
+        missing_samples = num_audio_chunks * audio_chunk_length - audio_tensor.shape[0]
         if missing_samples > 0:
             audio_tensor = torch.cat((audio_tensor, torch.zeros(missing_samples)))
         chunked_audio_tensor = audio_tensor.reshape((num_audio_chunks, audio_chunk_length))

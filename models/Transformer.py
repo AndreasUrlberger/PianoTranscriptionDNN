@@ -80,19 +80,19 @@ class TransformerModel(nn.Module):
 
         return loss.item()
 
-    def validation_step(self, src, tgt, src_pad_mask, tgt_pad_mask):
+    def validation_step(self, src, tgt, src_mask, tgt_mask):
         # Set model to evaluation mode
         self.eval()
         with torch.no_grad():
-            src, tgt, src_pad_mask, tgt_pad_mask = src.to(self.device), tgt.to(self.device), src_pad_mask.to(self.device), tgt_pad_mask.to(self.device)
+            src, tgt, src_mask, tgt_mask = src.to(self.device), tgt.to(self.device), src_mask.to(self.device), tgt_mask.to(self.device)
                 
             input_target = tgt[:, :-1]
             output_target = tgt[:, 1:]
             tgt_mask = tgt_mask[:, :-1]
                     
             # Prediction
-            pred_midi = self.forward(src, tgt, src_pad_mask, tgt_pad_mask)
-            loss = self.loss_fn(pred_midi, tgt)
+            pred_midi = self.forward(src, input_target, src_mask, tgt_mask)
+            loss = self.loss_fn(pred_midi, output_target)
 
         return loss.item()
       
